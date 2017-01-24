@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+
 import argparse
 import os
 import subprocess
-
 import sys
 
 
@@ -78,7 +78,9 @@ def check_and_update_program(program_name):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Check versions and upgrade brew cask programs.'
+        description="""Check versions and upgrade brew cask programs.
+If a new version will be found the old one will be completely uninstalled
+before proceeding with installation."""
     )
     parser.add_argument(
         'program',
