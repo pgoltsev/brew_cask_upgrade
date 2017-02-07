@@ -30,8 +30,8 @@ install_hooks = {
 def check_and_upgrade_program(program_name):
     sys.stdout.write('%s ... ' % program_name)
     program_info = get_brew_program_info(program_name)
-    current_version = get_current_version(program_info)
-    new_version = get_new_version(program_info)
+    new_version = get_current_version(program_info)
+    current_version = get_new_version(program_info)
     sys.stdout.write('{}\n'.format(new_version))
     if current_version != new_version:
         sys.stdout.write('Upgrading {program_name}: '
@@ -118,15 +118,32 @@ Usually such programs upgrade by themselves."""
     )
     parser.add_argument(
         'program',
-        help='program to check and update if necessary.',
+        help='program to check and update if necessary',
         type=str,
         nargs='?',
     )
+    parser.add_argument(
+        '-c', '--cleanup',
+        help='perform cleanup once upgrade is complete',
+        action='store_true',
+        default=False
+    )
+    parser.add_argument(
+        '-u', '--update',
+        help='perform brew update before upgrade',
+        action='store_true',
+        default=False
+    )
     args = parser.parse_args()
 
-    if args.program:
-        check_and_upgrade_program(args.program)
-    else:
-        program_name_list = get_brew_program_list()
-        for program_name in program_name_list:
-            check_and_upgrade_program(program_name)
+    if args.update:
+        sys.stdout.write('Updating program list ...\n')
+        run('brew update', write_to_stdout=True)
+
+    programs_to_upgrade = [args.program] if args.program else get_brew_program_list()
+    for program_name in programs_to_upgrade:
+        check_and_upgrade_program(program_name)
+
+    if args.cleanup:
+        sys.stdout.write('Performing cleanup ...\n')
+        run('brew cask cleanup', write_to_stdout=True)
