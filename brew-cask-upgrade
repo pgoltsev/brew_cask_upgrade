@@ -63,10 +63,10 @@ def get_new_version(program_info):
 def upgrade_program(program_name):
     run_pre_install_hook(program_name)
 
-    sys.stdout.write('Uninstalling an old version ...\n')
+    sys.stdout.write('Uninstalling old version ...\n')
     run('brew cask uninstall %s' % program_name, write_to_stdout=True)
 
-    sys.stdout.write('Installing a new version ...\n')
+    sys.stdout.write('Installing new version ...\n')
     run('brew cask install %s' % program_name, write_to_stdout=True)
 
     run_post_install_hook(program_name)
