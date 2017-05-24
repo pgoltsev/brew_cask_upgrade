@@ -3,45 +3,73 @@
 from __future__ import unicode_literals
 
 import argparse
-import os
 import shlex
 import subprocess
 import sys
 
-noop = lambda *args, **kwargs: None
+import os
 
 
-def pre_install_tunnelblick(*args, **kwargs):
-    import getpass
-    current_username = getpass.getuser()
-    run(
-        'sudo chown -R {username} /Applications/Tunnelblick.app'.format(
-            username=current_username
-        ),
-        write_to_stdout=True
-    )
+class HooksHandler(object):
+    hooks = {}
+
+    def noop(self, *args, **kwargs):
+        pass
+
+    default_hooks = (noop, noop)
+
+    def __init__(self, program_name):
+        super(HooksHandler, self).__init__()
+        self._program_name = program_name
+
+    def get_hook(self):
+        return self.hooks.get(self._program_name, self.default_hooks)
+
+    def run_pre_hook(self):
+        sys.stdout.write('Running pre hook ...\n')
+        self.get_hook()[0](self, self._program_name)
+
+    def run_post_hook(self):
+        sys.stdout.write('Running post hook ...\n')
+        self.get_hook()[1](self, self._program_name)
 
 
-install_hooks = {
-    'tunnelblick': (pre_install_tunnelblick, noop)
-}
+class InstallHooksHandler(HooksHandler):
+    hooks = {}
+
+
+class UninstallHooksHandler(HooksHandler):
+    def pre_uninstall_tunnelblick(self, *args, **kwargs):
+        import getpass
+        current_username = getpass.getuser()
+        run(
+            'sudo chown -R {username} /Applications/Tunnelblick.app'.format(
+                username=current_username
+            ),
+            write_to_stdout=True
+        )
+
+    hooks = {
+        'tunnelblick': (pre_uninstall_tunnelblick, HooksHandler.noop)
+    }
 
 
 def check_and_upgrade_program(program_name):
     sys.stdout.write('%s ... ' % program_name)
     program_info = get_brew_program_info(program_name)
-    new_version = get_current_version(program_info)
+
     current_version = get_new_version(program_info)
+    if current_version is None:
+        sys.stdout.write('not installed\n')
+        return
+
+    new_version = get_current_version(program_info)
     sys.stdout.write('{}\n'.format(new_version))
+
     if current_version != new_version:
-        sys.stdout.write('Upgrading {program_name}: '
-                         '{cur_ver} -> {new_ver} ...\n'.format(
-            program_name=program_name,
-            cur_ver=current_version,
-            new_ver=new_version,
-        ))
-        upgrade_program(program_name)
-        sys.stdout.write('Done.\n')
+        upgrade_program(current_version=current_version,
+                        new_version=new_version,
+                        program_name=program_name)
 
 
 def get_brew_program_info(program_name):
@@ -57,31 +85,44 @@ def get_current_version(program_info):
 
 def get_new_version(program_info):
     # e.g. program_info[2] == '/usr/local/Caskroom/keepassx/2.0.2 (217B)'
+    # or 'Not installed' if program is not installed
+    if program_info[2] == 'Not installed':
+        return None
     return os.path.basename(program_info[2].split(' ')[0])
 
 
-def upgrade_program(program_name):
-    run_pre_install_hook(program_name)
+def upgrade_program(current_version, new_version, program_name):
+    sys.stdout.write('Upgrading {program_name}: '
+                     '{current_version} -> {new_version} ...\n'.format(
+        program_name=program_name,
+        current_version=current_version,
+        new_version=new_version,
+    ))
+    uninstall_program(program_name)
+    install_program(program_name)
+    sys.stdout.write('Done.\n')
 
+
+def uninstall_program(program_name):
     sys.stdout.write('Uninstalling old version ...\n')
+
+    hook = UninstallHooksHandler(program_name)
+    hook.run_pre_hook()
+
     run('brew cask uninstall %s' % program_name, write_to_stdout=True)
 
+    hook.run_post_hook()
+
+
+def install_program(program_name):
     sys.stdout.write('Installing new version ...\n')
+
+    hook = InstallHooksHandler(program_name)
+    hook.run_pre_hook()
+
     run('brew cask install %s' % program_name, write_to_stdout=True)
 
-    run_post_install_hook(program_name)
-
-
-def run_pre_install_hook(program_name):
-    get_install_hook(program_name)[0](program_name)
-
-
-def run_post_install_hook(program_name):
-    get_install_hook(program_name)[1](program_name)
-
-
-def get_install_hook(program_name):
-    return install_hooks.get(program_name, (noop, noop))
+    hook.run_post_hook()
 
 
 def get_brew_program_list():
@@ -140,7 +181,9 @@ Usually such programs upgrade by themselves."""
         sys.stdout.write('Updating program list ...\n')
         run('brew update', write_to_stdout=True)
 
-    programs_to_upgrade = [args.program] if args.program else get_brew_program_list()
+    programs_to_upgrade = [args.program] \
+        if args.program \
+        else get_brew_program_list()
     for program_name in programs_to_upgrade:
         check_and_upgrade_program(program_name)
 
