@@ -26,12 +26,14 @@ class HooksHandler(object):
         return self.hooks.get(self._program_name, self.default_hooks)
 
     def run_pre_hook(self):
-        sys.stdout.write('Running pre hook ...\n')
+        sys.stdout.write('Running pre hook ... ')
         self.get_hook()[0](self, self._program_name)
+        sys.stdout.write('Done\n')
 
     def run_post_hook(self):
-        sys.stdout.write('Running post hook ...\n')
+        sys.stdout.write('Running post hook ... ')
         self.get_hook()[1](self, self._program_name)
+        sys.stdout.write('Done\n')
 
 
 class InstallHooksHandler(HooksHandler):
