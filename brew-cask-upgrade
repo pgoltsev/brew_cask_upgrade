@@ -9,6 +9,12 @@ import sys
 
 import os
 
+PY2 = sys.version_info.major == 2
+if PY2:
+    str_type = unicode
+else:
+    str_type = str
+
 
 class HooksHandler(object):
     hooks = {}
@@ -139,7 +145,9 @@ def run(command, write_to_stdout=False):
         stdout=subprocess.PIPE,
     )
     stdoutdata = process.communicate()[0] or ''
-    stdoutdata = stdoutdata.decode('utf-8')
+
+    if not isinstance(stdoutdata, str_type):
+        stdoutdata = stdoutdata.decode('utf-8')
 
     if stdoutdata:
         if write_to_stdout or process.returncode != 0:
