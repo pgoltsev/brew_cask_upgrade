@@ -1,172 +1,496 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""
+Script for upgrading programs installed via brew cask.
+
+Brew is a package manager widely used in Mac OS for installing command
+line programs easily. Brew-cask is a plugin for brew which allows to
+install graphical programs.
+This script is a wrapper that allows easily updating all programs installed
+via brew-cask.
+"""
 from __future__ import unicode_literals
 
 import argparse
+import os
 import shlex
 import subprocess
 import sys
-
-import os
+from functools import wraps
 
 PY2 = sys.version_info.major == 2
+"""Python version."""
+
 if PY2:
     str_type = unicode
+
+    from collections import namedtuple, OrderedDict
+
+    _CacheInfo = namedtuple("CacheInfo", "hits misses maxsize currsize")
+
+
+    def lru_cache(maxsize=100):
+        """Least-recently-used cache decorator.
+        If *maxsize* is set to None, the LRU features are disabled and the
+        cache can grow without bound.
+        Arguments to the cached function must be hashable.
+        View the cache statistics named tuple (hits, misses, maxsize,
+        currsize) with f.cache_info().  Clear the cache and statistics with
+        f.cache_clear(). Access the underlying function with f.__wrapped__.
+        See:  http://en.wikipedia.org/wiki/Cache_algorithms#Least_Recently_Used
+        """
+
+        # Users should only access the lru_cache through its public API:
+        #       cache_info, cache_clear, and f.__wrapped__
+        # The internals of the lru_cache are encapsulated for thread safety and
+        # to allow the implementation to change
+        # (including a possible C version).
+
+        def decorating_function(user_function,
+                                tuple_cls=tuple, sorted_func=sorted,
+                                len_func=len, key_error_cls=KeyError):
+            """Decorating function."""
+
+            hits, misses = [0], [0]
+            kwd_mark = (object(),)  # separates positional and keyword args
+
+            if maxsize is None:
+                cache = dict()  # simple cache without ordering or size limit
+
+                @wraps(user_function)
+                def wrapper(*args, **kwargs):
+                    """Wrapper for a function."""
+                    key = args
+                    if kwargs:
+                        key += kwd_mark + tuple_cls(
+                            sorted_func(kwargs.items())
+                        )
+                    try:
+                        result = cache[key]
+                        hits[0] += 1
+                        return result
+                    except key_error_cls:
+                        pass
+                    result = user_function(*args, **kwargs)
+                    cache[key] = result
+                    misses[0] += 1
+                    return result
+            else:
+                cache = OrderedDict()  # ordered least recent to most recent
+                cache_popitem = cache.popitem
+                cache_renew = cache.move_to_end
+
+                @wraps(user_function)
+                def wrapper(*args, **kwargs):
+                    """Wrapper for a function."""
+                    key = args
+                    if kwargs:
+                        key += kwd_mark + tuple_cls(
+                            sorted_func(kwargs.items())
+                        )
+                    try:
+                        result = cache[key]
+                        cache_renew(key)  # record recent use of this key
+                        hits[0] += 1
+                        return result
+                    except key_error_cls:
+                        pass
+                    result = user_function(*args, **kwargs)
+                    cache[key] = result  # record recent use of this key
+                    misses[0] += 1
+                    if len_func(cache) > maxsize:
+                        # purge least recently used cache entry
+                        cache_popitem(0)
+                    return result
+
+            def cache_info():
+                """Report cache statistics"""
+                return _CacheInfo(hits[0], misses[0], maxsize, len_func(cache))
+
+            def cache_clear():
+                """Clear the cache and cache statistics"""
+                cache.clear()
+                hits[0] = misses[0] = 0
+
+            wrapper.cache_info = cache_info
+            wrapper.cache_clear = cache_clear
+            return wrapper
+
+        return decorating_function
 else:
     str_type = str
 
+    from functools import lru_cache
+
+
+class OutputFormatter(object):
+    """Formatter for output to console."""
+    CODE = '\033' if PY2 else '\x1b'
+    PREFIX = '>>> '
+
+    def __call__(self, message, add_newline=True, add_prefix=True):
+        """
+        Print a message to the standard output.
+
+        :param message: Message to be printed.
+        :param add_newline: Whether add new line at the and of the message
+        or not. By default it is True.
+        :param add_prefix: Whether add prefix at the beginning of the message
+        or not. By default it is True.
+        """
+        msg = '{code}[0;32m{prefix}{code}[0m{msg}{newline}'.format(
+            code=self.CODE, msg=message,
+            newline='\n' if add_newline else '',
+            prefix=self.PREFIX if add_prefix else '',
+        )
+        sys.stdout.write(msg)
+
+
+out = OutputFormatter()
+"""Output handler."""
+
+
+def log(pre_msg, post_msg=None):
+    """Log message to output.
+
+    It is a decorator. The message will be output before decorated function
+    is called.
+    :param pre_msg: Message to be logged before the function is called.
+    :param post_msg: Message to be logged after the function is called.
+    :return: Decorator.
+    """
+
+    def decorator(func):
+        """Decorator for a function.
+
+        :param func: Function to be decorated.
+        :return: Decorated function.
+        """
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            """Wrapper for a function."""
+            out(pre_msg)
+
+            result = func(*args, **kwargs)
+
+            if post_msg:
+                out(post_msg)
+
+            return result
+
+        return wrapper
+
+    return decorator
+
 
 class HooksHandler(object):
-    hooks = {}
+    """Base class for hooks.
 
-    def noop(self, *args, **kwargs):
-        pass
+    Hooks are used to add an action on various events.
+    """
 
-    default_hooks = (noop, noop)
+    def __init__(self, name):
+        """
+        Initialize an instance.
 
-    def __init__(self, program_name):
+        :param name: Program name which hooks must be used to.
+        """
         super(HooksHandler, self).__init__()
-        self._program_name = program_name
-
-    def get_hook(self):
-        return self.hooks.get(self._program_name, self.default_hooks)
+        self._program_name = name
+        self._default_hooks = (self._pre_default, self._post_default)
 
     def run_pre_hook(self):
-        sys.stdout.write('Running pre hook ... ')
-        self.get_hook()[0](self, self._program_name)
-        sys.stdout.write('Done\n')
+        """Run hooks before installation."""
+        self._get_hooks()[0]()
 
     def run_post_hook(self):
-        sys.stdout.write('Running post hook ... ')
-        self.get_hook()[1](self, self._program_name)
-        sys.stdout.write('Done\n')
+        """Run hooks after installation."""
+        self._get_hooks()[1]()
+
+    def _get_hooks(self):
+        """Get hooks for the current program."""
+        return self._hooks.get(self._program_name, self._default_hooks)
+
+    @property
+    def _hooks(self):
+        """
+        Get mapping of a program name to its hooks.
+
+        :return: Dictionary where a key is program name and value is tuple
+        of two callable where the first one is executed before an operation
+        and the second one is executed right after it.
+        """
+        return {}
+
+    def _pre_default(self):
+        """Perform default pre-action operation."""
+        pass
+
+    def _post_default(self):
+        """Perform default post-action operation."""
+        pass
 
 
 class InstallHooksHandler(HooksHandler):
-    hooks = {}
+    """Hooks that are used on install operation."""
+
+    pass
 
 
 class UninstallHooksHandler(HooksHandler):
-    def pre_uninstall_tunnelblick(self, *args, **kwargs):
+    """Hooks that are used on install."""
+
+    @staticmethod
+    def _pre_uninstall_tunnelblick():
+        """Do some pre-installation action for 'tunnelblick' program."""
         import getpass
+
         current_username = getpass.getuser()
         run(
             'sudo chown -R {username} /Applications/Tunnelblick.app'.format(
                 username=current_username
             ),
-            write_to_stdout=True
+            print_out=True
         )
 
-    hooks = {
-        'tunnelblick': (pre_uninstall_tunnelblick, HooksHandler.noop)
-    }
+    @property
+    def _hooks(self):
+        """
+        Get mapping of a program name to its hooks.
+
+        :return: Dictionary where a key is program name and value is tuple
+        of two callable where the first one is executed before an operation
+        and the second one is executed right after it.
+        """
+        return {
+            'tunnelblick': (self._pre_uninstall_tunnelblick, self._pre_default)
+        }
 
 
-def check_and_upgrade_program(program_name):
-    sys.stdout.write('%s ... ' % program_name)
-    program_info = get_brew_program_info(program_name)
+def is_need_to_upgrade(name):
+    """
+    Check the given program needs to be updated.
 
-    current_version = get_new_version(program_info)
-    if current_version is None:
-        sys.stdout.write('not installed\n')
-        return
-
-    new_version = get_current_version(program_info)
-    sys.stdout.write('{}\n'.format(new_version))
-
-    if current_version != new_version:
-        upgrade_program(current_version=current_version,
-                        new_version=new_version,
-                        program_name=program_name)
+    :param name: Program name.
+    :return: True if new version is available, False otherwise.
+    """
+    current, new = log_latest_program_version(get_versions)(name)
+    return current != new
 
 
-def get_brew_program_info(program_name):
-    stdoutdata = run('brew cask info %s' % program_name)
-    return stdoutdata.split('\n')
+def log_latest_program_version(func):
+    """
+    Perform output the latest version of a given program.
+
+    :param func: Function to be decorated.
+    :return: Decorated function.
+    """
+
+    @wraps(func)
+    def wrapper(name):
+        """Wrapper for decorated function.
+
+        :param name: Program name.
+        :return: Value returned by decorated function.
+        """
+        out('%s ... ' % name, add_newline=False)
+
+        current_version, new_version = func(name)
+
+        version = 'not installed' if current_version is None else new_version
+        out(version, add_prefix=False)
+
+        return current_version, new_version
+
+    return wrapper
 
 
-def get_current_version(program_info):
-    # e.g. program_info[0] == 'keepassx: 2.0.3'
-    program_name, version = program_info[0].split(':', 1)
-    return version.strip()
+@lru_cache(maxsize=None)
+def get_versions(name):
+    """
+    Get the current and new versions of given program.
+
+    :param name: Program name.
+    :return: Tuple with the current and new versions of the program.
+    If the program is not installed both values are None.
+    """
+
+    def get_info(prg_name):
+        """
+        Get info about given program.
+
+        :param prg_name: Program name.
+        :return: List of strings with information about the program.
+        """
+        return run('brew cask info %s' % prg_name).split('\n')
+
+    def get_new_version(program_info):
+        """
+        Get new version of a program from its information.
+
+        :param program_info: Info about the program.
+        :return: Version as string.
+        """
+        # e.g. program_info[0] == 'keepassx: 2.0.3'
+        _, version = program_info[0].split(':', 1)
+        return version.strip()
+
+    def get_current_version(program_info):
+        """
+        Get current installed version of a program from its information.
+
+        :param program_info: Info about the program.
+        :return: Version as string or None if program is not installed.
+        """
+        # e.g. program_info[2] == '/usr/local/Caskroom/keepassx/2.0.2 (217B)'
+        # or 'Not installed' if program is not installed
+        if program_info[2].lower() == 'not installed':
+            return None
+        return os.path.basename(program_info[2].split(' ')[0])
+
+    info = get_info(name)
+    current_version, new_version = None, None
+
+    current_version = get_current_version(info)
+    if current_version:
+        new_version = get_new_version(info)
+
+    return current_version, new_version
 
 
-def get_new_version(program_info):
-    # e.g. program_info[2] == '/usr/local/Caskroom/keepassx/2.0.2 (217B)'
-    # or 'Not installed' if program is not installed
-    if program_info[2] == 'Not installed':
-        return None
-    return os.path.basename(program_info[2].split(' ')[0])
+def log_upgrade(func):
+    """
+    Log upgrade process.
+
+    It is a decorator for upgrade function.
+    :param func: Function to be decorated.
+    :return: Decorated function.
+    """
+
+    @wraps(func)
+    def wrapper(name):
+        """
+        Wrapper.
+
+        :param name: Program name.
+        :return: Result of a call of decorated function.
+        """
+        current_version, new_version = get_versions(name)
+        message = 'Upgrading {name}: {current_version} -> ' \
+                  '{new_version} ...'.format(name=name,
+                                             current_version=current_version,
+                                             new_version=new_version)
+
+        return log(message, 'Done.')(func)(name)
+
+    return wrapper
 
 
-def upgrade_program(current_version, new_version, program_name):
-    sys.stdout.write('Upgrading {program_name}: '
-                     '{current_version} -> {new_version} ...\n'.format(
-        program_name=program_name,
-        current_version=current_version,
-        new_version=new_version,
-    ))
-    uninstall_program(program_name)
-    install_program(program_name)
-    sys.stdout.write('Done.\n')
+@log_upgrade
+def upgrade_program(name):
+    """
+    Upgrade given program.
+
+    :param name: Program name.
+    """
+    uninstall_program(name)
+    install_program(name)
 
 
-def uninstall_program(program_name):
-    sys.stdout.write('Uninstalling old version ...\n')
+@log('Uninstalling old version ...')
+def uninstall_program(name):
+    """
+    Uninstall given program.
 
-    hook = UninstallHooksHandler(program_name)
+    :param name: Program name.
+    """
+    hook = UninstallHooksHandler(name)
     hook.run_pre_hook()
 
-    run('brew cask uninstall %s' % program_name, write_to_stdout=True)
+    run('brew cask uninstall %s' % name, print_out=True)
 
     hook.run_post_hook()
 
 
-def install_program(program_name):
-    sys.stdout.write('Installing new version ...\n')
+@log('Installing new version ...')
+def install_program(name):
+    """
+    Install given program.
 
-    hook = InstallHooksHandler(program_name)
+    :param name: Program name.
+    """
+    hook = InstallHooksHandler(name)
     hook.run_pre_hook()
 
-    run('brew cask install %s' % program_name, write_to_stdout=True)
+    run('brew cask install %s' % name, print_out=True)
 
     hook.run_post_hook()
 
 
-def get_brew_program_list():
-    stdoutdata = run('brew cask list')
-    return stdoutdata.strip().split('\n')
+def get_programs():
+    """
+    Get installed programs.
+
+    :return: List of installed program names.
+    """
+    return run('brew cask list').strip().split('\n')
 
 
-def run(command, write_to_stdout=False):
-    process = subprocess.Popen(
-        shlex.split(command),
-        stderr=subprocess.STDOUT,
-        stdout=subprocess.PIPE,
-    )
-    stdoutdata = process.communicate()[0] or ''
+def run(command, print_out=False):
+    """
+    Run given command as subprocess.
 
-    if not isinstance(stdoutdata, str_type):
-        stdoutdata = stdoutdata.decode('utf-8')
+    If the process is failed the function exits with the exit code of the
+    process and prints to output an error message.
+    :param command: Command as string to be run.
+    :param print_out: Whether print to output or not.
+    :return: Output of executed command.
+    """
+    return_code = 0
+    output = ''
 
-    if stdoutdata:
-        if write_to_stdout or process.returncode != 0:
-            sys.stdout.write(stdoutdata)
+    if print_out:
+        return_code = subprocess.call(shlex.split(command))
+    else:
+        try:
+            output = subprocess.check_output(shlex.split(command))
+        except subprocess.CalledProcessError as exc:
+            output = exc.output
+            return_code = exc.returncode
+            print_out = True
 
-    if process.returncode != 0:
-        exit(process.returncode)
+        if not isinstance(output, str_type):
+            output = output.decode('utf-8')
 
-    return stdoutdata
+        if output and print_out:
+            out(output, add_prefix=False, add_newline=False)
+
+    if return_code:
+        exit(return_code)
+
+    return output
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description="""Check versions and upgrade brew cask programs.
-If there is a new version of a program, the old one will be completely
-uninstalled before proceeding with installation. Notice that programs
-which don't have version (such as 'latest') will never be upgraded.
-Usually such programs upgrade by themselves."""
-    )
+@log('Performing cleanup ...')
+def cleanup():
+    """Perform brew cask cleanup."""
+    run('brew cask cleanup', print_out=True)
+
+
+@log('Updating program list ...')
+def update():
+    """Perform brew cask update."""
+    run('brew update', print_out=True)
+
+
+def get_options():
+    """
+    Get command line arguments.
+
+    :return: Dictionary with options passed as command line arguments.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         'program',
         help='program to check and update if necessary',
@@ -185,18 +509,25 @@ Usually such programs upgrade by themselves."""
         action='store_true',
         default=False
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        '-f', '--force-upgrade',
+        help='force upgrade even no upgrade is needed',
+        action='store_true',
+        default=False
+    )
+    return parser.parse_args()
 
-    if args.update:
-        sys.stdout.write('Updating program list ...\n')
-        run('brew update', write_to_stdout=True)
 
-    programs_to_upgrade = [args.program] \
-        if args.program \
-        else get_brew_program_list()
-    for program_name in programs_to_upgrade:
-        check_and_upgrade_program(program_name)
+if __name__ == '__main__':
+    options = get_options()
 
-    if args.cleanup:
-        sys.stdout.write('Performing cleanup ...\n')
-        run('brew cask cleanup', write_to_stdout=True)
+    if options.update:
+        update()
+
+    program_names = (options.program,) if options.program else get_programs()
+    for program_name in program_names:
+        if options.force_upgrade or is_need_to_upgrade(program_name):
+            upgrade_program(program_name)
+
+    if options.cleanup:
+        cleanup()
