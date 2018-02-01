@@ -16,428 +16,274 @@ import os
 import shlex
 import subprocess
 import sys
-from functools import wraps
 
 PY2 = sys.version_info.major == 2
 """Python version."""
 
 if PY2:
     str_type = unicode
-
-    from collections import namedtuple, OrderedDict
-
-    _CacheInfo = namedtuple("CacheInfo", "hits misses maxsize currsize")
-
-
-    def lru_cache(maxsize=100):
-        """Least-recently-used cache decorator.
-        If *maxsize* is set to None, the LRU features are disabled and the
-        cache can grow without bound.
-        Arguments to the cached function must be hashable.
-        View the cache statistics named tuple (hits, misses, maxsize,
-        currsize) with f.cache_info().  Clear the cache and statistics with
-        f.cache_clear(). Access the underlying function with f.__wrapped__.
-        See:  http://en.wikipedia.org/wiki/Cache_algorithms#Least_Recently_Used
-        """
-
-        # Users should only access the lru_cache through its public API:
-        #       cache_info, cache_clear, and f.__wrapped__
-        # The internals of the lru_cache are encapsulated for thread safety and
-        # to allow the implementation to change
-        # (including a possible C version).
-
-        def decorating_function(user_function,
-                                tuple_cls=tuple, sorted_func=sorted,
-                                len_func=len, key_error_cls=KeyError):
-            """Decorating function."""
-
-            hits, misses = [0], [0]
-            kwd_mark = (object(),)  # separates positional and keyword args
-
-            if maxsize is None:
-                cache = dict()  # simple cache without ordering or size limit
-
-                @wraps(user_function)
-                def wrapper(*args, **kwargs):
-                    """Wrapper for a function."""
-                    key = args
-                    if kwargs:
-                        key += kwd_mark + tuple_cls(
-                            sorted_func(kwargs.items())
-                        )
-                    try:
-                        result = cache[key]
-                        hits[0] += 1
-                        return result
-                    except key_error_cls:
-                        pass
-                    result = user_function(*args, **kwargs)
-                    cache[key] = result
-                    misses[0] += 1
-                    return result
-            else:
-                cache = OrderedDict()  # ordered least recent to most recent
-                cache_popitem = cache.popitem
-                cache_renew = cache.move_to_end
-
-                @wraps(user_function)
-                def wrapper(*args, **kwargs):
-                    """Wrapper for a function."""
-                    key = args
-                    if kwargs:
-                        key += kwd_mark + tuple_cls(
-                            sorted_func(kwargs.items())
-                        )
-                    try:
-                        result = cache[key]
-                        cache_renew(key)  # record recent use of this key
-                        hits[0] += 1
-                        return result
-                    except key_error_cls:
-                        pass
-                    result = user_function(*args, **kwargs)
-                    cache[key] = result  # record recent use of this key
-                    misses[0] += 1
-                    if len_func(cache) > maxsize:
-                        # purge least recently used cache entry
-                        cache_popitem(0)
-                    return result
-
-            def cache_info():
-                """Report cache statistics"""
-                return _CacheInfo(hits[0], misses[0], maxsize, len_func(cache))
-
-            def cache_clear():
-                """Clear the cache and cache statistics"""
-                cache.clear()
-                hits[0] = misses[0] = 0
-
-            wrapper.cache_info = cache_info
-            wrapper.cache_clear = cache_clear
-            return wrapper
-
-        return decorating_function
 else:
     str_type = str
-
-    from functools import lru_cache
 
 
 class OutputFormatter(object):
     """Formatter for output to console."""
     CODE = '\033' if PY2 else '\x1b'
-    PREFIX = '>>> '
+    PREFIX = '==> '
 
-    def __call__(self, message, add_newline=True, add_prefix=True):
+    def __init__(self, add_newline, add_prefix):
+        # type: (bool, bool) -> None
+        """
+        Initialize an instance.
+
+        :param add_newline: If True then new line will be added at the end
+        of every message. This behavior can be overrode per-message.
+        :param add_prefix: If True then a prefix will be added at
+        the beginning of every message. This behavior can be overrode
+        per-message.
+        """
+        super(OutputFormatter, self).__init__()
+
+        self._add_newline_default = add_newline
+        self._add_prefix_default = add_prefix
+
+    def __call__(self, message, add_newline=None, add_prefix=None):
+        # type: (str | unicode, bool, bool) -> None
         """
         Print a message to the standard output.
 
         :param message: Message to be printed.
         :param add_newline: Whether add new line at the and of the message
-        or not. By default it is True.
+        or not. If not defined the default value will be used.
         :param add_prefix: Whether add prefix at the beginning of the message
-        or not. By default it is True.
+        or not. If not defined the default value will be used.
         """
-        msg = '{code}[0;32m{prefix}{code}[0m{msg}{newline}'.format(
-            code=self.CODE, msg=message,
+        if add_newline is None:
+            add_newline = self._add_newline_default
+        if add_prefix is None:
+            add_prefix = self._add_prefix_default
+
+        msg = '{code}[1m{msg}{newline}'.format(
+            msg=message, code=self.CODE,
             newline='\n' if add_newline else '',
-            prefix=self.PREFIX if add_prefix else '',
         )
+
+        if add_prefix:
+            msg = '{code}[1;92m{prefix}{code}[0m{msg}'.format(
+                msg=msg, code=self.CODE,
+                prefix=self.PREFIX if add_prefix else '',
+            )
+
         sys.stdout.write(msg)
 
 
-out = OutputFormatter()
+out = OutputFormatter(add_newline=True, add_prefix=True)
 """Output handler."""
 
 
-def log(pre_msg, post_msg=None):
-    """Log message to output.
+class Program(object):
+    """
+    Class represents a program.
 
-    It is a decorator. The message will be output before decorated function
-    is called.
-    :param pre_msg: Message to be logged before the function is called.
-    :param post_msg: Message to be logged after the function is called.
-    :return: Decorator.
+    It provides methods for getting information about the program and
+    to control its upgrade process.
     """
 
-    def decorator(func):
-        """Decorator for a function.
+    def __new__(cls, name):
+        # type: (type, str | unicode) -> object
+        """
+        Create an instance.
 
-        :param func: Function to be decorated.
-        :return: Decorated function.
+        It searches for appropriate class in subclasses and if it finds
+        a subclass with 'name' property that is equal to a program name
+        then an instance will be created using this subclass.
+        :param name: Program name.
         """
 
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            """Wrapper for a function."""
-            out(pre_msg)
+        for subclass in cls.__subclasses__():
+            if getattr(subclass, 'NAME') == name:
+                cls = subclass
+                break
 
-            result = func(*args, **kwargs)
-
-            if post_msg:
-                out(post_msg)
-
-            return result
-
-        return wrapper
-
-    return decorator
-
-
-class HooksHandler(object):
-    """Base class for hooks.
-
-    Hooks are used to add an action on various events.
-    """
+        return object.__new__(cls)
 
     def __init__(self, name):
+        # type: (str | unicode) -> None
         """
         Initialize an instance.
 
-        :param name: Program name which hooks must be used to.
+        :param name: Name of a program.
         """
-        super(HooksHandler, self).__init__()
-        self._program_name = name
-        self._default_hooks = (self._pre_default, self._post_default)
+        super(Program, self).__init__()
 
-    def run_pre_hook(self):
-        """Run hooks before installation."""
-        self._get_hooks()[0]()
+        self._name = name
+        self._update_versions()
 
-    def run_post_hook(self):
-        """Run hooks after installation."""
-        self._get_hooks()[1]()
-
-    def _get_hooks(self):
-        """Get hooks for the current program."""
-        return self._hooks.get(self._program_name, self._default_hooks)
-
-    @property
-    def _hooks(self):
+    def _update_versions(self):
+        # type: () -> None
         """
-        Get mapping of a program name to its hooks.
+        Update versions of the program.
 
-        :return: Dictionary where a key is program name and value is tuple
-        of two callable where the first one is executed before an operation
-        and the second one is executed right after it.
+        It gets remote and installed versions of the program and stores them
+        in instance's variables.
         """
-        return {}
+        out('%s ... ' % self._name, add_newline=False)
 
-    def _pre_default(self):
-        """Perform default pre-action operation."""
-        pass
+        info = self._get_program_info(self._name)
+        self._repo_version = self._get_repo_version(info)
+        self._installed_version = self._get_installed_version(info)
 
-    def _post_default(self):
-        """Perform default post-action operation."""
-        pass
+        out(self._installed_version or 'not installed', add_prefix=False)
 
-
-class InstallHooksHandler(HooksHandler):
-    """Hooks that are used on install operation."""
-
-    pass
-
-
-class UninstallHooksHandler(HooksHandler):
-    """Hooks that are used on install."""
-
-    @staticmethod
-    def _pre_uninstall_tunnelblick():
-        """Do some pre-installation action for 'tunnelblick' program."""
-        import getpass
-
-        current_username = getpass.getuser()
-        run(
-            'sudo chown -R {username} /Applications/Tunnelblick.app'.format(
-                username=current_username
-            ),
-            print_out=True
-        )
-
-    @property
-    def _hooks(self):
-        """
-        Get mapping of a program name to its hooks.
-
-        :return: Dictionary where a key is program name and value is tuple
-        of two callable where the first one is executed before an operation
-        and the second one is executed right after it.
-        """
-        return {
-            'tunnelblick': (self._pre_uninstall_tunnelblick, self._pre_default)
-        }
-
-
-def is_need_to_upgrade(name):
-    """
-    Check the given program needs to be updated.
-
-    :param name: Program name.
-    :return: True if new version is available, False otherwise.
-    """
-    current, new = log_latest_program_version(get_versions)(name)
-    return current != new
-
-
-def log_latest_program_version(func):
-    """
-    Perform output the latest version of a given program.
-
-    :param func: Function to be decorated.
-    :return: Decorated function.
-    """
-
-    @wraps(func)
-    def wrapper(name):
-        """Wrapper for decorated function.
-
-        :param name: Program name.
-        :return: Value returned by decorated function.
-        """
-        out('%s ... ' % name, add_newline=False)
-
-        current_version, new_version = func(name)
-
-        version = 'not installed' if current_version is None else new_version
-        out(version, add_prefix=False)
-
-        return current_version, new_version
-
-    return wrapper
-
-
-@lru_cache(maxsize=None)
-def get_versions(name):
-    """
-    Get the current and new versions of given program.
-
-    :param name: Program name.
-    :return: Tuple with the current and new versions of the program.
-    If the program is not installed both values are None.
-    """
-
-    def get_info(prg_name):
+    @classmethod
+    def _get_program_info(cls, name):
+        # type: (str | unicode) -> list[str | unicode]
         """
         Get info about given program.
 
-        :param prg_name: Program name.
+        :param name: Program name.
         :return: List of strings with information about the program.
         """
-        return run('brew cask info %s' % prg_name).split('\n')
+        return run('brew cask info %s' % name).split('\n')
 
-    def get_new_version(program_info):
+    @classmethod
+    def _get_repo_version(cls, program_info):
+        # type: (str | unicode) -> str | unicode | None
         """
-        Get new version of a program from its information.
+        Get a version of the program that is available in repository.
 
         :param program_info: Info about the program.
         :return: Version as string.
         """
         # e.g. program_info[0] == 'keepassx: 2.0.3'
-        _, version = program_info[0].split(':', 1)
+        try:
+            version_string = program_info[0]
+        except IndexError:
+            return None
+
+        try:
+            _, version = version_string.split(':', 1)
+        except ValueError:
+            # if the version string doesn't contain colon
+            # an attempt to assign split result to a tuple will cause
+            # 'too many values to unpack' ValueError exception
+            return None
+
         return version.strip()
 
-    def get_current_version(program_info):
+    @classmethod
+    def _get_installed_version(cls, program_info):
+        # type: (dict) -> str | unicode | None
         """
-        Get current installed version of a program from its information.
+        Get currently installed version of a program.
 
         :param program_info: Info about the program.
         :return: Version as string or None if program is not installed.
         """
         # e.g. program_info[2] == '/usr/local/Caskroom/keepassx/2.0.2 (217B)'
         # or 'Not installed' if program is not installed
-        if program_info[2].lower() == 'not installed':
+        try:
+            version_string = program_info[2]
+        except IndexError:
             return None
-        return os.path.basename(program_info[2].split(' ')[0])
 
-    info = get_info(name)
-    current_version, new_version = None, None
+        if version_string.lower() == 'not installed':
+            return None
 
-    current_version = get_current_version(info)
-    if current_version:
-        new_version = get_new_version(info)
+        return os.path.basename(version_string.split(' ')[0])
 
-    return current_version, new_version
-
-
-def log_upgrade(func):
-    """
-    Log upgrade process.
-
-    It is a decorator for upgrade function.
-    :param func: Function to be decorated.
-    :return: Decorated function.
-    """
-
-    @wraps(func)
-    def wrapper(name):
+    @property
+    def is_upgrade_available(self):
+        # type: () -> bool
         """
-        Wrapper.
+        Allow to determine whether new version is available.
 
-        :param name: Program name.
-        :return: Result of a call of decorated function.
+        :return: True if new version is available, False otherwise.
         """
-        current_version, new_version = get_versions(name)
-        message = 'Upgrading {name}: {current_version} -> ' \
-                  '{new_version} ...'.format(name=name,
-                                             current_version=current_version,
-                                             new_version=new_version)
+        return self.installed_version and \
+            self.repo_version != self.installed_version
 
-        return log(message, 'Done.')(func)(name)
+    @property
+    def repo_version(self):
+        # type: () -> bool
+        """
+        Get a version that is currently available in repository.
 
-    return wrapper
+        :return: Version as string.
+        """
+        return self._repo_version
+
+    @property
+    def installed_version(self):
+        # type: () -> str | unicode
+        """
+        Get a version that is currently installed.
+
+        :return: Version as string.
+        """
+        return self._installed_version
+
+    @property
+    def is_installed(self):
+        # type: () -> bool
+        """Get status of the program.
+
+        :return: True if program is installed, False otherwise.
+        """
+        return bool(self._installed_version)
+
+    def upgrade(self):
+        # type: () -> None
+        """
+        Perform upgrade of the program.
+
+        It uninstalls the program first and then installs new version from
+        repository if available.
+        """
+        out('Upgrading {name}: '
+            '{local_version} -> '
+            '{repo_version} ...'.format(name=self._name,
+                                        local_version=self._installed_version,
+                                        repo_version=self._repo_version))
+        self.uninstall()
+        self.install()
+
+    def uninstall(self):
+        # type: () -> None
+        """Uninstall the program."""
+        run('brew cask uninstall %s' % self._name, print_out=True)
+
+    def install(self):
+        # type: () -> None
+        """Install the program."""
+        run('brew cask install %s' % self._name, print_out=True)
 
 
-@log_upgrade
-def upgrade_program(name):
-    """
-    Upgrade given program.
+class Tunnelblick(Program):
+    """Tunnelblick program."""
 
-    :param name: Program name.
-    """
-    uninstall_program(name)
-    install_program(name)
+    NAME = 'tunnelblick'
 
+    def uninstall(self):
+        """
+        Uninstall the program.
 
-@log('Uninstalling old version ...')
-def uninstall_program(name):
-    """
-    Uninstall given program.
+        It sets the current user as the owner of an application before
+        uninstalls it. It is necessary, because tunnelblick application
+        is owned by root.
+        """
+        import getpass
 
-    :param name: Program name.
-    """
-    hook = UninstallHooksHandler(name)
-    hook.run_pre_hook()
+        current_username = getpass.getuser()
+        run('sudo chown -R {username} '
+            '/Applications/Tunnelblick.app'.format(username=current_username),
+            print_out=True)
 
-    run('brew cask uninstall %s' % name, print_out=True)
-
-    hook.run_post_hook()
-
-
-@log('Installing new version ...')
-def install_program(name):
-    """
-    Install given program.
-
-    :param name: Program name.
-    """
-    hook = InstallHooksHandler(name)
-    hook.run_pre_hook()
-
-    run('brew cask install %s' % name, print_out=True)
-
-    hook.run_post_hook()
-
-
-def get_programs():
-    """
-    Get installed programs.
-
-    :return: List of installed program names.
-    """
-    return run('brew cask list').strip().split('\n')
+        super(Tunnelblick, self).uninstall()
 
 
 def run(command, print_out=False):
+    # type: (str | unicode, bool) -> str | unicode
     """
     Run given command as subprocess.
 
@@ -472,19 +318,34 @@ def run(command, print_out=False):
     return output
 
 
-@log('Performing cleanup ...')
+def get_programs():
+    # type: () -> list[str | unicode]
+    """
+    Get installed programs.
+
+    :return: List of installed program names.
+    """
+    return run('brew cask list').strip().split('\n')
+
+
 def cleanup():
+    # type: () -> None
     """Perform brew cask cleanup."""
+    out('Performing cleanup ...')
+
     run('brew cask cleanup', print_out=True)
 
 
-@log('Updating program list ...')
 def update():
+    # type: () -> None
     """Perform brew cask update."""
+    out('Updating program list ...')
+
     run('brew update', print_out=True)
 
 
 def get_options():
+    # type: () -> argparse.Namespace
     """
     Get command line arguments.
 
@@ -521,13 +382,17 @@ def get_options():
 if __name__ == '__main__':
     options = get_options()
 
-    if options.update:
+    if getattr(options, 'update'):
         update()
 
-    program_names = (options.program,) if options.program else get_programs()
+    program_name = getattr(options, 'program')
+    program_names = (program_name,) if program_name else get_programs()
     for program_name in program_names:
-        if options.force_upgrade or is_need_to_upgrade(program_name):
-            upgrade_program(program_name)
+        program = Program(program_name)
+        if program.is_installed and \
+                (getattr(options, 'force_upgrade') or
+                 program.is_upgrade_available):
+            program.upgrade()
 
-    if options.cleanup:
+    if getattr(options, 'cleanup'):
         cleanup()
