@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-Script for upgrading programs installed via brew cask.
+"""Script for upgrading programs installed via brew cask.
 
 Brew is a package manager widely used in Mac OS for installing command
 line programs easily. Brew-cask is a plugin for brew which allows to
@@ -33,8 +32,7 @@ class OutputFormatter(object):
 
     def __init__(self, add_newline, add_prefix):
         # type: (bool, bool) -> None
-        """
-        Initialize an instance.
+        """Initialize an instance.
 
         :param add_newline: If True then new line will be added at the end
         of every message. This behavior can be overrode per-message.
@@ -49,8 +47,7 @@ class OutputFormatter(object):
 
     def __call__(self, message, add_newline=None, add_prefix=None):
         # type: (str | unicode, bool, bool) -> None
-        """
-        Print a message to the standard output.
+        """Print a message to the standard output.
 
         :param message: Message to be printed.
         :param add_newline: Whether add new line at the and of the message
@@ -82,8 +79,7 @@ out = OutputFormatter(add_newline=True, add_prefix=True)
 
 
 class Program(object):
-    """
-    Class represents a program.
+    """Class represents a program.
 
     It provides methods for getting information about the program and
     to control its upgrade process.
@@ -91,8 +87,7 @@ class Program(object):
 
     def __new__(cls, name):
         # type: (type, str | unicode) -> object
-        """
-        Create an instance.
+        """Create an instance.
 
         It searches for appropriate class in subclasses and if it finds
         a subclass with 'name' property that is equal to a program name
@@ -109,8 +104,7 @@ class Program(object):
 
     def __init__(self, name):
         # type: (str | unicode) -> None
-        """
-        Initialize an instance.
+        """Initialize an instance.
 
         :param name: Name of a program.
         """
@@ -121,8 +115,7 @@ class Program(object):
 
     def _update_versions(self):
         # type: () -> None
-        """
-        Update versions of the program.
+        """Update versions of the program.
 
         It gets remote and installed versions of the program and stores them
         in instance's variables.
@@ -138,8 +131,7 @@ class Program(object):
     @classmethod
     def _get_program_info(cls, name):
         # type: (str | unicode) -> list[str | unicode]
-        """
-        Get info about given program.
+        """Get info about given program.
 
         :param name: Program name.
         :return: List of strings with information about the program.
@@ -149,8 +141,7 @@ class Program(object):
     @classmethod
     def _get_repo_version(cls, program_info):
         # type: (str | unicode) -> str | unicode | None
-        """
-        Get a version of the program that is available in repository.
+        """Get a version of the program that is available in repository.
 
         :param program_info: Info about the program.
         :return: Version as string.
@@ -174,8 +165,7 @@ class Program(object):
     @classmethod
     def _get_installed_version(cls, program_info):
         # type: (dict) -> str | unicode | None
-        """
-        Get currently installed version of a program.
+        """Get currently installed version of a program.
 
         :param program_info: Info about the program.
         :return: Version as string or None if program is not installed.
@@ -195,8 +185,7 @@ class Program(object):
     @property
     def is_upgrade_available(self):
         # type: () -> bool
-        """
-        Allow to determine whether new version is available.
+        """Allow to determine whether new version is available.
 
         :return: True if new version is available, False otherwise.
         """
@@ -206,8 +195,7 @@ class Program(object):
     @property
     def repo_version(self):
         # type: () -> bool
-        """
-        Get a version that is currently available in repository.
+        """Get a version that is currently available in repository.
 
         :return: Version as string.
         """
@@ -216,8 +204,7 @@ class Program(object):
     @property
     def installed_version(self):
         # type: () -> str | unicode
-        """
-        Get a version that is currently installed.
+        """Get a version that is currently installed.
 
         :return: Version as string.
         """
@@ -234,8 +221,7 @@ class Program(object):
 
     def upgrade(self):
         # type: () -> None
-        """
-        Perform upgrade of the program.
+        """Perform upgrade of the program.
 
         It uninstalls the program first and then installs new version from
         repository if available.
@@ -265,8 +251,7 @@ class Tunnelblick(Program):
     NAME = 'tunnelblick'
 
     def uninstall(self):
-        """
-        Uninstall the program.
+        """Uninstall the program.
 
         It sets the current user as the owner of an application before
         uninstalls it. It is necessary, because tunnelblick application
@@ -284,8 +269,7 @@ class Tunnelblick(Program):
 
 def run(command, print_out=False):
     # type: (str | unicode, bool) -> str | unicode
-    """
-    Run given command as subprocess.
+    """Run given command as subprocess.
 
     If the process is failed the function exits with the exit code of the
     process and prints to output an error message.
@@ -320,8 +304,7 @@ def run(command, print_out=False):
 
 def get_programs():
     # type: () -> list[str | unicode]
-    """
-    Get installed programs.
+    """Get installed programs.
 
     :return: List of installed program names.
     """
@@ -346,8 +329,7 @@ def update():
 
 def get_options():
     # type: () -> argparse.Namespace
-    """
-    Get command line arguments.
+    """Get command line arguments.
 
     :return: Dictionary with options passed as command line arguments.
     """
