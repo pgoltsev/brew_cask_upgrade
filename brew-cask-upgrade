@@ -7,6 +7,7 @@ line programs easily. Brew-cask is a plugin for brew which allows to
 install graphical programs.
 This script is a wrapper that allows easily updating all programs installed
 via brew-cask.
+The script is tested in Python 2.7/3.4-3.6.
 """
 from __future__ import unicode_literals
 
