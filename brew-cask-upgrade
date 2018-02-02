@@ -140,7 +140,7 @@ class Program(object):
         :param name: Program name.
         :return: List of strings with information about the program.
         """
-        return run('brew cask info %s' % name).split('\n')
+        return run('brew cask info %s' % name, False).split('\n')
 
     @classmethod
     def _get_repo_version(cls, program_info):
@@ -241,12 +241,12 @@ class Program(object):
     def uninstall(self):
         # type: () -> None
         """Uninstall the program."""
-        run('brew cask uninstall %s' % self._name, print_out=True)
+        run('brew cask uninstall %s' % self._name)
 
     def install(self):
         # type: () -> None
         """Install the program."""
-        run('brew cask install %s' % self._name, print_out=True)
+        run('brew cask install %s' % self._name)
 
 
 class Tunnelblick(Program):
@@ -266,20 +266,19 @@ class Tunnelblick(Program):
 
         current_username = getpass.getuser()
         run('sudo chown -R {username} '
-            '/Applications/Tunnelblick.app'.format(username=current_username),
-            print_out=True)
+            '/Applications/Tunnelblick.app'.format(username=current_username))
 
         super(Tunnelblick, self).uninstall()
 
 
-def run(command, print_out=False):
+def run(command, print_out=True):
     # type: (str | unicode, bool) -> str | unicode
     """Run given command as subprocess.
 
     If the process is failed the function exits with the exit code of the
     process and prints to output an error message.
     :param command: Command as string to be run.
-    :param print_out: Whether print to output or not.
+    :param print_out: Whether print to output or not. Default is True.
     :return: Output of executed command.
     """
     return_code = 0
@@ -313,7 +312,7 @@ def get_programs():
 
     :return: List of installed program names.
     """
-    return run('brew cask list').strip().split('\n')
+    return run('brew cask list', False).strip().split('\n')
 
 
 def cleanup():
@@ -321,7 +320,7 @@ def cleanup():
     """Perform brew cask cleanup."""
     out('Performing cleanup ...')
 
-    run('brew cask cleanup', print_out=True)
+    run('brew cask cleanup')
 
 
 def update():
@@ -329,7 +328,7 @@ def update():
     """Perform brew cask update."""
     out('Updating program list ...')
 
-    run('brew update', print_out=True)
+    run('brew update')
 
 
 def get_options():
