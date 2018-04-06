@@ -365,7 +365,8 @@ def get_options():
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+def main():
+    """Execute script."""
     options = get_options()
 
     if getattr(options, 'update'):
@@ -382,3 +383,7 @@ if __name__ == '__main__':
 
     if getattr(options, 'cleanup'):
         cleanup()
+
+
+if __name__ == '__main__':
+    main()
