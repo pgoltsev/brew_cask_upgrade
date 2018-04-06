@@ -168,7 +168,7 @@ class Program(object):
 
     @classmethod
     def _get_installed_version(cls, program_info):
-        # type: (dict) -> str | unicode | None
+        # type: (list) -> str | unicode | None
         """Get currently installed version of a program.
 
         :param program_info: Info about the program.
