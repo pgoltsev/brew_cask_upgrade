@@ -71,8 +71,7 @@ class OutputFormatter(object):
 
         if add_prefix:
             msg = '{code}[1;92m{prefix}{code}[0m{msg}'.format(
-                msg=msg, code=self.CODE,
-                prefix=self.PREFIX if add_prefix else '',
+                msg=msg, code=self.CODE, prefix=self.PREFIX,
             )
 
         sys.stdout.write(msg)
