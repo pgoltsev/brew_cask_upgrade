@@ -88,14 +88,15 @@ class Program(object):
     to control its upgrade process.
     """
 
-    def __new__(cls, name):
-        # type: (type, str | unicode) -> object
+    def __new__(cls, name, info=None):
+        # type: (str | unicode, list) -> object
         """Create an instance.
 
         It searches for appropriate class in subclasses and if it finds
         a subclass with 'NAME' property that is equal to a program name
         then an instance will be created using this subclass.
         :param name: Program name.
+        :param name: Information about the program.
         """
 
         for subclass in cls.__subclasses__():
@@ -105,15 +106,17 @@ class Program(object):
 
         return object.__new__(cls)
 
-    def __init__(self, name):
-        # type: (str | unicode) -> None
+    def __init__(self, name, info=None):
+        # type: (str | unicode, list) -> None
         """Initialize an instance.
 
         :param name: Name of a program.
+        :param info: Information about the program.
         """
         super(Program, self).__init__()
 
         self._name = name
+        self._info = info
         self._update_versions()
 
     def _update_versions(self):
@@ -131,15 +134,14 @@ class Program(object):
 
         out(self._installed_version or 'not installed', add_prefix=False)
 
-    @classmethod
-    def _get_program_info(cls, name):
+    def _get_program_info(self, name):
         # type: (str | unicode) -> list[str | unicode]
         """Get info about given program.
 
         :param name: Program name.
         :return: List of strings with information about the program.
         """
-        return run('brew cask info %s' % name, False).split('\n')
+        return self._info or run('brew cask info %s' % name, False).split('\n')
 
     @classmethod
     def _get_repo_version(cls, program_info):
@@ -314,6 +316,31 @@ def get_programs():
     return run('brew cask list', False).strip().split('\n')
 
 
+def get_programs_info(program_names):
+    # type: (list) -> dict[str, list]
+    """Get information on given program names.
+
+    :param program_names: Names of programs to get information on.
+    :return: Dictionary containing the name of a program and related
+    information {program_name: information_string_lines}.
+    """
+    lines = run('brew cask info %s' % ' '.join(program_names),
+                False).split('\n')
+    programs = {}
+    info_lines = None
+    for line in lines:
+        possible_program_name = line.split(':')[0]
+        if possible_program_name in program_names:
+            program_name = possible_program_name
+            if program_name not in programs:
+                programs[program_name] = []
+            info_lines = programs[program_name]
+
+        info_lines.append(line)
+
+    return programs
+
+
 def cleanup():
     # type: () -> None
     """Perform brew cask cleanup."""
@@ -373,8 +400,9 @@ def main():
 
     program_name = getattr(options, 'program')
     program_names = (program_name,) if program_name else get_programs()
+    programs_info = get_programs_info(program_names)
     for program_name in program_names:
-        program = Program(program_name)
+        program = Program(program_name, programs_info[program_name])
         if program.is_installed and \
                 (getattr(options, 'force_upgrade') or
                  program.is_upgrade_available):
