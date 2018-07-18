@@ -168,7 +168,8 @@ class Program(object):
             # 'too many values to unpack' ValueError exception
             return None
 
-        return version.strip()
+        # remove postfix such as ' (auto_updates)' etc.
+        return version.strip().split(' ')[0].strip()
 
     @classmethod
     def _get_installed_version(cls, program_info):
