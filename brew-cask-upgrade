@@ -17,6 +17,9 @@ import shlex
 import subprocess
 import sys
 
+__version__ = '0.1.0'
+__author__ = 'Pavel Goltsev'
+
 PY2 = sys.version_info.major == 2
 """Python version."""
 
